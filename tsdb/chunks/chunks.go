@@ -292,7 +292,7 @@ func checkCRC32(data, sum []byte) error {
 type Writer struct {
 	dirFile *os.File
 	files   []*os.File
-	wbuf    fileutil.BufWriter
+	wbuf    fileutil.MmapBufWriter
 	n       int64
 	crc32   hash.Hash
 	buf     [binary.MaxVarintLen32]byte
@@ -373,17 +373,16 @@ func (w *Writer) finalizeTail() error {
 		return nil
 	}
 
+	off := int64(SegmentHeaderSize)
+
 	if w.wbuf != nil {
+		// As the file was pre-allocated, we truncate any superfluous zero bytes.
+		off = w.wbuf.Offset()
 		if err := w.wbuf.Flush(); err != nil {
 			return err
 		}
 	}
 	if err := tf.Sync(); err != nil {
-		return err
-	}
-	// As the file was pre-allocated, we truncate any superfluous zero bytes.
-	off, err := tf.Seek(0, io.SeekCurrent)
-	if err != nil {
 		return err
 	}
 	if err := tf.Truncate(off); err != nil {
@@ -399,7 +398,7 @@ func (w *Writer) cut() error {
 		return err
 	}
 
-	n, f, _, err := cutSegmentFile(w.dirFile, MagicChunks, chunksFormatV1, w.segmentSize)
+	n, f, mw, _, err := cutSegmentFile(w.dirFile, MagicChunks, chunksFormatV1, w.segmentSize)
 	if err != nil {
 		return err
 	}
@@ -407,21 +406,12 @@ func (w *Writer) cut() error {
 
 	w.files = append(w.files, f)
 	if w.wbuf != nil {
-		if err := w.wbuf.Reset(f); err != nil {
+		if err := w.wbuf.Reset(mw); err != nil {
 			return err
 		}
 	} else {
-		var (
-			wbuf fileutil.BufWriter
-			err  error
-		)
 		size := 8 * 1024 * 1024
-		if w.useUncachedIO {
-			// Uncached IO is implemented using direct I/O for now.
-			wbuf, err = fileutil.NewDirectIOWriter(f, size)
-		} else {
-			wbuf, err = fileutil.NewBufioWriterWithSize(f, size)
-		}
+		wbuf, err := fileutil.NewBufioMmapWriterWithSize(mw, size)
 		if err != nil {
 			return err
 		}
@@ -431,22 +421,24 @@ func (w *Writer) cut() error {
 	return nil
 }
 
-func cutSegmentFile(dirFile *os.File, magicNumber uint32, chunksFormat byte, allocSize int64) (headerSize int, newFile *os.File, seq int, returnErr error) {
+func cutSegmentFile(dirFile *os.File, magicNumber uint32, chunksFormat byte, allocSize int64) (headerSize int, newFile *os.File, newMw *fileutil.MmapWriter, seq int, returnErr error) {
 	p, seq, err := nextSequenceFile(dirFile.Name())
 	if err != nil {
-		return 0, nil, 0, fmt.Errorf("next sequence file: %w", err)
+		return 0, nil, nil, 0, fmt.Errorf("next sequence file: %w", err)
 	}
 	ptmp := p + ".tmp"
-	f, err := os.OpenFile(ptmp, os.O_WRONLY|os.O_CREATE, 0o666)
+	f, err := os.OpenFile(ptmp, os.O_RDWR|os.O_CREATE, 0o666)
 	if err != nil {
-		return 0, nil, 0, fmt.Errorf("open temp file: %w", err)
+		return 0, nil, nil, 0, fmt.Errorf("open temp file: %w", err)
 	}
+	mw := fileutil.NewMmapWriter(f)
 	defer func() {
 		if returnErr != nil {
 			errs := []error{
 				returnErr,
 			}
 			if f != nil {
+				mw.Close()
 				errs = append(errs, f.Close())
 			}
 			// Calling RemoveAll on a non-existent file does not return error.
@@ -456,11 +448,11 @@ func cutSegmentFile(dirFile *os.File, magicNumber uint32, chunksFormat byte, all
 	}()
 	if allocSize > 0 {
 		if err = fileutil.Preallocate(f, allocSize, true); err != nil {
-			return 0, nil, 0, fmt.Errorf("preallocate: %w", err)
+			return 0, nil, nil, 0, fmt.Errorf("preallocate: %w", err)
 		}
 	}
 	if err = dirFile.Sync(); err != nil {
-		return 0, nil, 0, fmt.Errorf("sync directory: %w", err)
+		return 0, nil, nil, 0, fmt.Errorf("sync directory: %w", err)
 	}
 
 	// Write header metadata for new file.
@@ -468,29 +460,35 @@ func cutSegmentFile(dirFile *os.File, magicNumber uint32, chunksFormat byte, all
 	binary.BigEndian.PutUint32(metab[:MagicChunksSize], magicNumber)
 	metab[4] = chunksFormat
 
-	n, err := f.Write(metab)
+	n, err := mw.Write(metab)
 	if err != nil {
-		return 0, nil, 0, fmt.Errorf("write header: %w", err)
+		return 0, nil, nil, 0, fmt.Errorf("write header: %w", err)
 	}
+	if err := mw.Close(); err != nil {
+		return 0, nil, nil, 0, fmt.Errorf("close temp mmap: %w", err)
+	}
+	mw = nil;
 	if err := f.Close(); err != nil {
-		return 0, nil, 0, fmt.Errorf("close temp file: %w", err)
+		return 0, nil, nil, 0, fmt.Errorf("close temp file: %w", err)
 	}
 	f = nil
 
 	if err := fileutil.Rename(ptmp, p); err != nil {
-		return 0, nil, 0, fmt.Errorf("replace file: %w", err)
+		return 0, nil, nil, 0, fmt.Errorf("replace file: %w", err)
 	}
 
-	f, err = os.OpenFile(p, os.O_WRONLY, 0o666)
+	f, err = os.OpenFile(p, os.O_RDWR, 0o666)
 	if err != nil {
-		return 0, nil, 0, fmt.Errorf("open final file: %w", err)
+		return 0, nil, nil, 0, fmt.Errorf("open final file: %w", err)
 	}
+	mw = fileutil.NewMmapWriter(f)
+
 	// Skip header for further writes.
 	offset := int64(n)
-	if _, err := f.Seek(offset, 0); err != nil {
-		return 0, nil, 0, fmt.Errorf("seek to %d in final file: %w", offset, err)
+	if _, err := mw.Seek(offset, 0); err != nil {
+		return 0, nil, nil, 0, fmt.Errorf("seek to %d in final file: %w", offset, err)
 	}
-	return n, f, seq, nil
+	return n, f, mw, seq, nil
 }
 
 func (w *Writer) write(b []byte) error {

@@ -196,6 +196,7 @@ type ChunkDiskMapper struct {
 	writeBufferSize int
 
 	curFile         *os.File      // File being written to.
+	curMw           *fileutil.MmapWriter
 	curFileSequence int           // Index of current open file being appended to. 0 if no file is active.
 	curFileOffset   atomic.Uint64 // Bytes written in current open file.
 	curFileMaxt     int64         // Used for the size retention.
@@ -350,6 +351,7 @@ func (cdm *ChunkDiskMapper) openMMapFiles() (returnErr error) {
 		}
 		// Verify magic number.
 		if m := binary.BigEndian.Uint32(b.byteSlice.Range(0, MagicChunksSize)); m != MagicHeadChunks {
+			panic("barf")
 			return fmt.Errorf("%s: invalid magic number %x", files[i], m)
 		}
 
@@ -604,7 +606,7 @@ func (cdm *ChunkDiskMapper) cut() (seq, offset int, returnErr error) {
 		return 0, 0, err
 	}
 
-	offset, newFile, seq, err := cutSegmentFile(cdm.dir, MagicHeadChunks, headChunksFormatV1, HeadChunkFilePreallocationSize)
+	offset, newFile, newMw, seq, err := cutSegmentFile(cdm.dir, MagicHeadChunks, headChunksFormatV1, HeadChunkFilePreallocationSize)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -613,6 +615,7 @@ func (cdm *ChunkDiskMapper) cut() (seq, offset int, returnErr error) {
 		// The file should not be closed if there is no error,
 		// its kept open in the ChunkDiskMapper.
 		if returnErr != nil {
+			returnErr = errors.Join(returnErr, newMw.Close())
 			returnErr = errors.Join(returnErr, newFile.Close())
 		}
 	}()
@@ -633,10 +636,11 @@ func (cdm *ChunkDiskMapper) cut() (seq, offset int, returnErr error) {
 	cdm.readPathMtx.Lock()
 	cdm.curFileSequence = seq
 	cdm.curFile = newFile
+	cdm.curMw = newMw
 	if cdm.chkWriter != nil {
-		cdm.chkWriter.Reset(newFile)
+		cdm.chkWriter.Reset(cdm.curMw)
 	} else {
-		cdm.chkWriter = bufio.NewWriterSize(newFile, cdm.writeBufferSize)
+		cdm.chkWriter = bufio.NewWriterSize(cdm.curMw, cdm.writeBufferSize)
 	}
 
 	cdm.closers[cdm.curFileSequence] = mmapFile
@@ -659,10 +663,9 @@ func (cdm *ChunkDiskMapper) finalizeCurFile() error {
 		return err
 	}
 
-	if err := cdm.curFile.Sync(); err != nil {
+	if err := cdm.curMw.Close(); err != nil {
 		return err
 	}
-
 	return cdm.curFile.Close()
 }
 
