@@ -167,7 +167,7 @@ func (mw *MmapWriter) Write(p []byte) (n int, err error) {
 			return
 		}
 	}
-	if mw.wpos + len(p) > len(mw.buf) {
+	if mw.wpos+len(p) > len(mw.buf) {
 		err = mw.resize(mw.wpos + len(p))
 		if err != nil {
 			return

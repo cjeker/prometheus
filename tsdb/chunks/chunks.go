@@ -467,7 +467,7 @@ func cutSegmentFile(dirFile *os.File, magicNumber uint32, chunksFormat byte, all
 	if err := mw.Close(); err != nil {
 		return 0, nil, nil, 0, fmt.Errorf("close temp mmap: %w", err)
 	}
-	mw = nil;
+	mw = nil
 	if err := f.Close(); err != nil {
 		return 0, nil, nil, 0, fmt.Errorf("close temp file: %w", err)
 	}

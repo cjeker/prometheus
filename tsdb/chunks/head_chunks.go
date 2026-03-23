@@ -195,7 +195,7 @@ type ChunkDiskMapper struct {
 	dir             *os.File
 	writeBufferSize int
 
-	curFile         *os.File      // File being written to.
+	curFile         *os.File // File being written to.
 	curMw           *fileutil.MmapWriter
 	curFileSequence int           // Index of current open file being appended to. 0 if no file is active.
 	curFileOffset   atomic.Uint64 // Bytes written in current open file.
@@ -351,7 +351,6 @@ func (cdm *ChunkDiskMapper) openMMapFiles() (returnErr error) {
 		}
 		// Verify magic number.
 		if m := binary.BigEndian.Uint32(b.byteSlice.Range(0, MagicChunksSize)); m != MagicHeadChunks {
-			panic("barf")
 			return fmt.Errorf("%s: invalid magic number %x", files[i], m)
 		}
 
