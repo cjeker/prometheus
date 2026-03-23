@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
+	"github.com/prometheus/prometheus/tsdb/fileutil"
 )
 
 var writeQueueSize int
@@ -132,7 +133,7 @@ func TestChunkDiskMapper_WriteChunk_Chunk_IterateChunks(t *testing.T) {
 	require.Len(t, hrw.mmappedChunkFiles, 3, "expected 3 mmapped files, got %d", len(hrw.mmappedChunkFiles))
 	require.Len(t, hrw.closers, len(hrw.mmappedChunkFiles))
 
-	actualBytes, err := os.ReadFile(firstFileName)
+	actualBytes, err := mmapReadFile(firstFileName)
 	require.NoError(t, err)
 
 	// Check header of the segment file.
@@ -586,4 +587,16 @@ func createChunk(t *testing.T, idx int, hrw *ChunkDiskMapper) (seriesRef HeadSer
 	})
 	<-awaitCb
 	return seriesRef, chunkRef, mint, maxt, chunk, isOOO
+}
+
+func mmapReadFile(path string) ([]byte, error) {
+	var b []byte
+	m, err := fileutil.OpenMmapFile(path)
+	if err != nil {
+		return nil, err
+	}
+	bb := m.Bytes()
+	b = append(b, bb...)
+	m.Close()
+	return b, nil
 }
