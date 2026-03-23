@@ -29,6 +29,46 @@ type MmapWriter struct {
 	rpos int
 }
 
+type MmapBufWriter interface {
+	Write([]byte) (int, error)
+	Flush() error
+	Offset() int64
+	Reset(mw *MmapWriter) error
+}
+
+type mmapBufioWriter struct {
+	mw *MmapWriter
+}
+
+func (m *mmapBufioWriter) Write(b []byte) (int, error) {
+	return m.mw.Write(b)
+}
+
+func (m *mmapBufioWriter) Flush() error {
+	return m.mw.Close()
+}
+
+func (m *mmapBufioWriter) Offset() int64 {
+	off, _ := m.mw.Seek(0, io.SeekCurrent)
+	return off
+}
+
+func (m *mmapBufioWriter) Reset(mw *MmapWriter) error {
+	if err := m.mw.Close(); err != nil {
+		return err
+	}
+	m.mw = mw
+	return nil
+}
+
+func NewBufioMmapWriterWithSize(mw *MmapWriter, size int) (MmapBufWriter, error) {
+	err := mw.mmap(size)
+	if err != nil {
+		return nil, err
+	}
+	return &mmapBufioWriter{mw}, nil
+}
+
 func NewMmapWriter(f *os.File) *MmapWriter {
 	return &MmapWriter{f: f}
 }
