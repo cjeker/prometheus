@@ -53,7 +53,9 @@ func (mw *MmapWriter) Sync() error {
 func (mw *MmapWriter) Close() error {
 	mw.buf = nil
 	if mw.mf != nil {
-		return mw.mf.Close()
+		err := mw.mf.Close()
+		mw.mf = nil
+		return err
 	}
 	return nil
 }
@@ -86,20 +88,23 @@ func (mw *MmapWriter) resize(size int) error {
 }
 
 func (mw *MmapWriter) Seek(offset int64, whence int) (ret int64, err error) {
-	var abs int
+	var abs int64
+	mw.Lock()
+	defer mw.Unlock()
 	switch whence {
 	case io.SeekStart:
-		abs = int(offset)
+		abs = offset
+	case io.SeekCurrent:
+		abs = int64(mw.wpos) + offset
 	default:
 		return 0, errors.New("invalid whence")
 	}
 	if abs < 0 {
 		return 0, errors.New("negative position")
 	}
-	mw.Lock()
-	defer mw.Unlock()
-	mw.rpos = abs
-	return offset, nil
+	mw.wpos = int(abs)
+	mw.rpos = int(abs)
+	return abs, nil
 }
 
 func (mw *MmapWriter) Read(p []byte) (n int, err error) {
@@ -117,12 +122,12 @@ func (mw *MmapWriter) Write(p []byte) (n int, err error) {
 	mw.Lock()
 	defer mw.Unlock()
 	if mw.mf == nil {
-		err = mw.mmap(len(p))
+		err = mw.mmap(mw.wpos + len(p))
 		if err != nil {
 			return
 		}
 	}
-	if len(p) > len(mw.buf)-mw.wpos {
+	if mw.wpos + len(p) > len(mw.buf) {
 		err = mw.resize(mw.wpos + len(p))
 		if err != nil {
 			return
