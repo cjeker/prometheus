@@ -191,15 +191,16 @@ func (*chunkPos) bytesToWriteForChunk(chkLen uint64) uint64 {
 // ChunkDiskMapper is for writing the Head block chunks to disk
 // and access chunks via mmapped files.
 type ChunkDiskMapper struct {
+	// needs to be correctly aligned
+	curFileOffset atomic.Uint64 // Bytes written in current open file.
 	// Writer.
 	dir             *os.File
 	writeBufferSize int
 
 	curFile         *os.File // File being written to.
 	curMw           *fileutil.MmapWriter
-	curFileSequence int           // Index of current open file being appended to. 0 if no file is active.
-	curFileOffset   atomic.Uint64 // Bytes written in current open file.
-	curFileMaxt     int64         // Used for the size retention.
+	curFileSequence int   // Index of current open file being appended to. 0 if no file is active.
+	curFileMaxt     int64 // Used for the size retention.
 
 	// The values in evtlPos represent the file position which will eventually be
 	// reached once the content of the write queue has been fully processed.
