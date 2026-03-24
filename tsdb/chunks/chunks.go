@@ -378,7 +378,7 @@ func (w *Writer) finalizeTail() error {
 	if w.wbuf != nil {
 		// As the file was pre-allocated, we truncate any superfluous zero bytes.
 		off = w.wbuf.Offset()
-		if err := w.wbuf.Flush(); err != nil {
+		if err := w.wbuf.Close(); err != nil {
 			return err
 		}
 	}
@@ -410,8 +410,7 @@ func (w *Writer) cut() error {
 			return err
 		}
 	} else {
-		size := 8 * 1024 * 1024
-		wbuf, err := fileutil.NewBufioMmapWriterWithSize(mw, size)
+		wbuf, err := fileutil.NewBufioMmapWriter(mw)
 		if err != nil {
 			return err
 		}
@@ -481,7 +480,7 @@ func cutSegmentFile(dirFile *os.File, magicNumber uint32, chunksFormat byte, all
 	if err != nil {
 		return 0, nil, nil, 0, fmt.Errorf("open final file: %w", err)
 	}
-	mw = fileutil.NewMmapWriter(f)
+	mw, err = fileutil.NewMmapWriterWithSize(f, int(allocSize))
 
 	// Skip header for further writes.
 	offset := int64(n)

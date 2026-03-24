@@ -76,11 +76,7 @@ func OpenMmapFileWithSize(path string, size int) (mf *MmapFile, retErr error) {
 }
 
 func (f *MmapFile) resize(size int) error {
-	err := f.Sync()
-	if err != nil {
-		return fmt.Errorf("resize sync: %w", err)
-	}
-	err = munmap(f.b)
+	err := munmap(f.b)
 	if err != nil {
 		return fmt.Errorf("resize munmap: %w", err)
 	}

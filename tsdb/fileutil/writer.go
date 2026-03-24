@@ -31,7 +31,7 @@ type MmapWriter struct {
 
 type MmapBufWriter interface {
 	Write([]byte) (int, error)
-	Flush() error
+	Close() error
 	Offset() int64
 	Reset(mw *MmapWriter) error
 }
@@ -44,7 +44,7 @@ func (m *mmapBufioWriter) Write(b []byte) (int, error) {
 	return m.mw.Write(b)
 }
 
-func (m *mmapBufioWriter) Flush() error {
+func (m *mmapBufioWriter) Close() error {
 	return m.mw.Close()
 }
 
@@ -61,10 +61,14 @@ func (m *mmapBufioWriter) Reset(mw *MmapWriter) error {
 	return nil
 }
 
-func NewBufioMmapWriterWithSize(mw *MmapWriter, size int) (MmapBufWriter, error) {
-	err := mw.mmap(size)
-	if err != nil {
-		return nil, err
+func NewBufioMmapWriter(mw *MmapWriter) (MmapBufWriter, error) {
+	if mw.mf == nil {
+		mf, err := OpenRwMmapFromFile(mw.f, 0)
+		if err != nil {
+			return nil, err
+		}
+		mw.mf = mf
+		mw.buf = mf.Bytes()
 	}
 	return &mmapBufioWriter{mw}, nil
 }
@@ -176,7 +180,6 @@ func (mw *MmapWriter) Write(p []byte) (n int, err error) {
 
 	n = copy(mw.buf[mw.wpos:], p)
 	mw.wpos += n
-	err = mw.Sync()
 	return
 }
 
@@ -196,6 +199,5 @@ func (mw *MmapWriter) WriteAt(p []byte, pos int64) (n int, err error) {
 		}
 	}
 	n = copy(mw.buf[pos:], p)
-	err = mw.Sync()
 	return
 }
