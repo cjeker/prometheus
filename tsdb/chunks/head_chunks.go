@@ -61,6 +61,7 @@ const (
 	// MaxHeadChunkMetaSize is the max size of an mmapped chunks minus the chunks data.
 	// Max because the uvarint size can be smaller.
 	MaxHeadChunkMetaSize = SeriesRefSize + 2*MintMaxtSize + ChunkEncodingSize + MaxChunkLengthFieldSize + CRCSize
+	MinHeadChunkMetaSize = SeriesRefSize + 2*MintMaxtSize + ChunkEncodingSize + 1 + CRCSize
 	// MinWriteBufferSize is the minimum write buffer size allowed.
 	MinWriteBufferSize = 64 * 1024 // 64KB.
 	// MaxWriteBufferSize is the maximum write buffer size allowed.
@@ -794,7 +795,7 @@ func (cdm *ChunkDiskMapper) Chunk(ref ChunkDiskMapperRef) (chunkenc.Chunk, error
 		return nil, &CorruptionErr{
 			Dir:       cdm.dir.Name(),
 			FileIndex: sgmIndex,
-			Err:       fmt.Errorf("head chunk file doesn't include enough bytes to read the chunk - required:%v, available:%v", chkDataEnd, mmapFile.byteSlice.Len()),
+			Err:       fmt.Errorf("head chunk file doesn't Include enough bytes to read the chunk - required:%v, available:%v", chkDataEnd, mmapFile.byteSlice.Len()),
 		}
 	}
 
@@ -854,7 +855,7 @@ func (cdm *ChunkDiskMapper) IterateAllChunks(f func(seriesRef HeadSeriesRef, chu
 		}
 		idx := HeadChunkFileHeaderSize
 		for idx < fileEnd {
-			if fileEnd-idx < MaxHeadChunkMetaSize {
+			if fileEnd-idx < MinHeadChunkMetaSize {
 				// Check for all 0s which marks the end of the file.
 				allZeros := true
 				for _, b := range mmapFile.byteSlice.Range(idx, fileEnd) {
@@ -871,7 +872,7 @@ func (cdm *ChunkDiskMapper) IterateAllChunks(f func(seriesRef HeadSeriesRef, chu
 					Dir:       cdm.dir.Name(),
 					FileIndex: segID,
 					Err: fmt.Errorf("head chunk file has some unread data, but doesn't include enough bytes to read the chunk header"+
-						" - required:%v, available:%v, file:%d", idx+MaxHeadChunkMetaSize, fileEnd, segID),
+						" - required:%v, available:%v, file:%d cur %d", idx+MinHeadChunkMetaSize, fileEnd, segID, cdm.curFileSequence),
 				}
 			}
 			chunkRef := newChunkDiskMapperRef(uint64(segID), uint64(idx))
@@ -906,7 +907,7 @@ func (cdm *ChunkDiskMapper) IterateAllChunks(f func(seriesRef HeadSeriesRef, chu
 				return &CorruptionErr{
 					Dir:       cdm.dir.Name(),
 					FileIndex: segID,
-					Err:       fmt.Errorf("head chunk file doesn't include enough bytes to read the chunk header - required:%v, available:%v, file:%d", idx+CRCSize, fileEnd, segID),
+					Err:       fmt.Errorf("head chunk file doesn't include enough bytes to read the crc32 sum - required:%v, available:%v, hcf: %v, srs: %v, mms: %v, ces: %v, n: %v dataLen: %v, numSamples: %v, file:%d cur:%d", idx+CRCSize, fileEnd, HeadChunkFileHeaderSize, SeriesRefSize, MintMaxtSize, ChunkEncodingSize, n, dataLen, numSamples, segID, cdm.curFileSequence),
 				}
 			}
 
